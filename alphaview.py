@@ -37,21 +37,27 @@ html, body, [class*="css"] { font-family: 'DM Sans', sans-serif !important; }
 [data-testid="stSidebar"] .stButton button { background: #3b82f6 !important; border: none !important; border-radius: 8px !important; color: #fff !important; font-weight: 600 !important; }
 [data-testid="stSidebar"] .stButton button:hover { background: #2563eb !important; }
 
-/* Always show sidebar toggle arrow */
-[data-testid="collapsedControl"] {
+
+/* Sidebar toggle — all known Streamlit selector variants */
+[data-testid="collapsedControl"],
+[data-testid="stSidebarCollapsedControl"],
+section[data-testid="stSidebarCollapsedControl"],
+button[data-testid="collapsedControl"],
+.st-emotion-cache-1egp75f,
+.st-emotion-cache-90vs21 {
     display: flex !important;
     visibility: visible !important;
     opacity: 1 !important;
     background: #080c14 !important;
     border-right: 1px solid rgba(255,255,255,0.08) !important;
+    z-index: 999 !important;
 }
-[data-testid="collapsedControl"] svg {
-    fill: rgba(255,255,255,0.5) !important;
+[data-testid="collapsedControl"] svg,
+[data-testid="stSidebarCollapsedControl"] svg {
+    fill: rgba(255,255,255,0.6) !important;
+    color: rgba(255,255,255,0.6) !important;
 }
-section[data-testid="stSidebarCollapsedControl"] {
-    display: flex !important;
-    visibility: visible !important;
-}
+
 
 .main, .stApp { background: #080c14 !important; }
 .stTabs [data-baseweb="tab-list"] { background: rgba(255,255,255,0.03) !important; border-radius: 10px !important; padding: 4px !important; gap: 2px !important; border: 1px solid rgba(255,255,255,0.06) !important; }
@@ -172,6 +178,24 @@ hr { border-color: rgba(255,255,255,0.06) !important; }
         <div class="av-dot-3"></div>
     </div>
 </div>
+
+<script>
+// Force sidebar open on load
+function openSidebar() {
+    const selectors = [
+        '[data-testid="collapsedControl"]',
+        '[data-testid="stSidebarCollapsedControl"]',
+        'button[data-testid="collapsedControl"]',
+        'section[data-testid="stSidebarCollapsedControl"] button'
+    ];
+    for (const sel of selectors) {
+        const el = window.parent.document.querySelector(sel);
+        if (el) { el.click(); break; }
+    }
+}
+setTimeout(openSidebar, 800);
+setTimeout(openSidebar, 1500);
+</script>
 """, unsafe_allow_html=True)
 
 # ── Plotly shared config ──────────────────────────────────────
