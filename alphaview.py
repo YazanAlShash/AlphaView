@@ -30,33 +30,31 @@ st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap');
 html, body, [class*="css"] { font-family: 'DM Sans', sans-serif !important; }
-#MainMenu, footer, header { visibility: hidden; }
+#MainMenu { visibility: hidden; }
+footer { visibility: hidden; }
+header { visibility: hidden; }
+/* Keep sidebar toggle always visible */
+[data-testid="collapsedControl"],
+[data-testid="stSidebarCollapsedControl"],
+section[data-testid="stSidebarCollapsedControl"] {
+    visibility: visible !important;
+    display: flex !important;
+    opacity: 1 !important;
+    background: #080c14 !important;
+    border-right: 1px solid rgba(255,255,255,0.1) !important;
+}
+[data-testid="collapsedControl"] *,
+[data-testid="stSidebarCollapsedControl"] * {
+    visibility: visible !important;
+    color: rgba(255,255,255,0.6) !important;
+    fill: rgba(255,255,255,0.6) !important;
+}
 .block-container { padding-top: 1rem !important; padding-bottom: 1rem !important; }
 [data-testid="stSidebar"] { background: #080c14 !important; border-right: 1px solid rgba(255,255,255,0.06) !important; }
 [data-testid="stSidebar"] * { color: #e8eaf0 !important; }
 [data-testid="stSidebar"] .stButton button { background: #3b82f6 !important; border: none !important; border-radius: 8px !important; color: #fff !important; font-weight: 600 !important; }
 [data-testid="stSidebar"] .stButton button:hover { background: #2563eb !important; }
 
-
-/* Sidebar toggle — all known Streamlit selector variants */
-[data-testid="collapsedControl"],
-[data-testid="stSidebarCollapsedControl"],
-section[data-testid="stSidebarCollapsedControl"],
-button[data-testid="collapsedControl"],
-.st-emotion-cache-1egp75f,
-.st-emotion-cache-90vs21 {
-    display: flex !important;
-    visibility: visible !important;
-    opacity: 1 !important;
-    background: #080c14 !important;
-    border-right: 1px solid rgba(255,255,255,0.08) !important;
-    z-index: 999 !important;
-}
-[data-testid="collapsedControl"] svg,
-[data-testid="stSidebarCollapsedControl"] svg {
-    fill: rgba(255,255,255,0.6) !important;
-    color: rgba(255,255,255,0.6) !important;
-}
 
 
 .main, .stApp { background: #080c14 !important; }
@@ -178,24 +176,6 @@ hr { border-color: rgba(255,255,255,0.06) !important; }
         <div class="av-dot-3"></div>
     </div>
 </div>
-
-<script>
-// Force sidebar open on load
-function openSidebar() {
-    const selectors = [
-        '[data-testid="collapsedControl"]',
-        '[data-testid="stSidebarCollapsedControl"]',
-        'button[data-testid="collapsedControl"]',
-        'section[data-testid="stSidebarCollapsedControl"] button'
-    ];
-    for (const sel of selectors) {
-        const el = window.parent.document.querySelector(sel);
-        if (el) { el.click(); break; }
-    }
-}
-setTimeout(openSidebar, 800);
-setTimeout(openSidebar, 1500);
-</script>
 """, unsafe_allow_html=True)
 
 # ── Plotly shared config ──────────────────────────────────────
