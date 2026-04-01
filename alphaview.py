@@ -264,16 +264,25 @@ def sv(df,row,col=0):
 
 @st.cache_data(ttl=3600)
 def fetch_all(ticker, start, end):
-    t=yf.Ticker(ticker); hist=t.history(start=start,end=end,auto_adjust=True)
-    if hist.empty: return None
-    info=t.info; income=t.financials; balance=t.balance_sheet; cashflow=t.cashflow
-    try: rf=yf.Ticker("^TNX").history(period="5d")["Close"].iloc[-1]/100
-    except: rf=0.045
-    try:
-        sp=yf.Ticker("^GSPC").history(period="10y")["Close"]
-        rm=float(sp.resample("YE").last().pct_change().dropna().mean())
-    except: rm=0.10
-    return dict(hist=hist,info=info,income=income,balance=balance,cashflow=cashflow,rf=rf,rm=rm)
+    import time
+    for attempt in range(3):
+        try:
+            t=yf.Ticker(ticker); hist=t.history(start=start,end=end,auto_adjust=True)
+            if hist.empty: return None
+            info=t.info; income=t.financials; balance=t.balance_sheet; cashflow=t.cashflow
+            try: rf=yf.Ticker("^TNX").history(period="5d")["Close"].iloc[-1]/100
+            except: rf=0.045
+            try:
+                sp=yf.Ticker("^GSPC").history(period="10y")["Close"]
+                rm=float(sp.resample("YE").last().pct_change().dropna().mean())
+            except: rm=0.10
+            return dict(hist=hist,info=info,income=income,balance=balance,cashflow=cashflow,rf=rf,rm=rm)
+        except Exception as e:
+            if "Too Many Requests" in str(e) or "429" in str(e):
+                time.sleep(3 * (attempt + 1))
+                continue
+            return None
+    return None
 
 def calc_ratios(info,income,balance,cashflow):
     r={}
@@ -451,7 +460,8 @@ with st.spinner(f"Fetching data for **{ticker_input}**..."):
     data = fetch_all(ticker_input, eff_start.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d"))
 
 if data is None:
-    st.error(f"❌ No data found for **{ticker_input}**."); st.stop()
+    st.error(f"❌ Could not fetch data for **{ticker_input}**. Yahoo Finance may be rate limiting — please wait 30 seconds and try again.")
+    st.stop()
 
 hist=data["hist"]; info=data["info"]; income=data["income"]
 balance=data["balance"]; cashflow=data["cashflow"]
