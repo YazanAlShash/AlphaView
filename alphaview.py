@@ -642,33 +642,59 @@ with t1:
             hi,lo=bm[k]; return "🟢" if v>=hi else("🟡" if v>=lo else "🔴")
         return "⚪"
 
+    RATIO_HELP = {
+        "Gross Profit Margin":     "Revenue minus cost of goods sold, as % of revenue. Higher = more efficient production.",
+        "Operating Profit Margin": "Profit after operating expenses, as % of revenue. Shows core business profitability.",
+        "Net Profit Margin":       "Final profit after all expenses and taxes, as % of revenue.",
+        "Return on Assets (ROA)":  "Net income ÷ total assets. How efficiently assets generate profit.",
+        "Return on Equity (ROE)":  "Net income ÷ shareholders equity. Return generated on investors' money.",
+        "EPS":                     "Earnings Per Share — profit allocated to each outstanding share.",
+        "Current Ratio":           "Current assets ÷ current liabilities. Above 1.5 = can comfortably pay short-term debts.",
+        "Quick Ratio":             "Like current ratio but excludes inventory. Above 1.0 = strong short-term liquidity.",
+        "Cash Ratio":              "Cash ÷ current liabilities. Most conservative liquidity measure.",
+        "P/E Ratio":               "Price ÷ earnings per share. How much investors pay per $1 of earnings. High = growth expected.",
+        "Dividend Payout Ratio":   "% of earnings paid as dividends. High = income stock, Low = growth stock.",
+        "Debt-to-Equity":          "Total debt ÷ equity. Below 1 = more equity than debt. Above 3 = highly leveraged.",
+        "Sustainable Growth Rate": "Max growth rate achievable without new equity financing. ROE × retention rate.",
+    }
+
     st.markdown("#### 💰 Profitability")
     pc=st.columns(3)
     for i,k in enumerate(["Gross Profit Margin","Operating Profit Margin","Net Profit Margin",
                            "Return on Assets (ROA)","Return on Equity (ROE)","EPS"]):
         v=ratios.get(k); sfx="%" if k!="EPS" else ""
-        pc[i%3].metric(f"{hlth(k,v)} {k}",f"{v:.2f}{sfx}" if v is not None else "N/A")
+        pc[i%3].metric(f"{hlth(k,v)} {k}",
+                       f"{v:.2f}{sfx}" if v is not None else "N/A",
+                       help=RATIO_HELP.get(k,""))
 
     st.markdown("#### 💧 Liquidity")
     lc=st.columns(3)
     for i,k in enumerate(["Current Ratio","Quick Ratio","Cash Ratio"]):
-        v=ratios.get(k); lc[i].metric(f"{hlth(k,v)} {k}",f"{v:.2f}" if v is not None else "N/A")
+        v=ratios.get(k)
+        lc[i].metric(f"{hlth(k,v)} {k}",
+                     f"{v:.2f}" if v is not None else "N/A",
+                     help=RATIO_HELP.get(k,""))
 
     st.markdown("#### 📌 Other")
     ac=st.columns(4)
     for i,k in enumerate(["P/E Ratio","Dividend Payout Ratio","Debt-to-Equity","Sustainable Growth Rate"]):
         v=ratios.get(k)
         if v is not None and k in ["Dividend Payout Ratio","Sustainable Growth Rate"]:
-            ac[i].metric(f"{hlth(k,v)} {k}",f"{v*100:.1f}%" if v<10 else f"{v:.1f}%")
+            ac[i].metric(f"{hlth(k,v)} {k}",
+                         f"{v*100:.1f}%" if v<10 else f"{v:.1f}%",
+                         help=RATIO_HELP.get(k,""))
         else:
-            ac[i].metric(f"{hlth(k,v)} {k}",f"{v:.2f}" if v is not None else "N/A")
+            ac[i].metric(f"{hlth(k,v)} {k}",
+                         f"{v:.2f}" if v is not None else "N/A",
+                         help=RATIO_HELP.get(k,""))
 
     fcf=ratios.get("Free Cash Flow")
     if fcf:
         clr="#22c55e" if fcf>0 else "#ef4444"
+        msg="✅ Positive FCF — generates cash after capex" if fcf>0 else "⚠️ Negative FCF — spending exceeds operating cash"
         st.markdown("#### 💵 Free Cash Flow")
         st.markdown(f"<span style='font-family:DM Mono,monospace;font-size:22px;color:{clr};font-weight:500'>${fcf/1e9:.2f}B</span>",unsafe_allow_html=True)
-        st.success("✅ Positive FCF") if fcf>0 else st.warning("⚠️ Negative FCF")
+        st.markdown(f"<span style='color:{clr};font-size:13px'>{msg}</span>", unsafe_allow_html=True)
     st.caption("🟢 Strong  🟡 Acceptable  🔴 Weak  ⚪ No benchmark")
 
 # ══════════════════════════════════════════════════════════════
@@ -748,21 +774,39 @@ with t3:
         fig_mc.add_trace(go.Scatter(x=fdates,y=yv,mode="lines",name=nm,
             line=dict(color=clr,width=2 if "Median" in nm else 1,dash="solid" if "Median" in nm else "dash"),
             hovertemplate=f"{nm}<br>%{{x|%b %d, %Y}}: $%{{y:.2f}}<extra></extra>"))
-    fig_mc.add_hline(y=S0,line_color="white",line_width=1,opacity=0.4,
-                     annotation_text=f"Start ${S0:.2f}",annotation_font_color="rgba(255,255,255,0.5)")
+    # add_hline without annotation (Plotly 6 compat)
+    fig_mc.add_shape(type="line", x0=0, x1=1, xref="paper",
+                     y0=S0, y1=S0, line=dict(color="white", width=1, dash="dot"))
+    fig_mc.add_annotation(x=1, xref="paper", y=S0, text=f"Start ${S0:.2f}",
+                          showarrow=False, font=dict(color="rgba(255,255,255,0.5)", size=10),
+                          xanchor="right", yanchor="bottom")
     pl(fig_mc, height=420, title=f"{ticker_input} — {prediction_days}-Day Monte Carlo Forecast")
     st.plotly_chart(fig_mc,use_container_width=True)
 
-    fig_dist=go.Figure()
-    fig_dist.add_trace(go.Histogram(x=finals,nbinsx=60,marker_color="rgba(59,130,246,0.7)",
-        hovertemplate="$%{x:.0f}: %{y} paths<extra></extra>"))
-    for v,n,c in [(p5,"5th","#ef4444"),(p25,"25th","#f59e0b"),(p50,"Median","#22c55e"),
-                  (p75,"75th","#f59e0b"),(p95,"95th","#ef4444"),(S0,"Start","#fff")]:
-        fig_dist.add_vline(x=v,line_color=c,line_width=1.5,
-                           annotation_text=f"{n} ${v:.0f}",
-                           annotation_font_color=c,annotation_font_size=10)
-    pl(fig_dist, height=260, title="Distribution of Final Prices", legend=False, rsel=False, rslide=False, xtype=None)
-    st.plotly_chart(fig_dist,use_container_width=True)
+    # Smooth distribution using KDE instead of histogram
+    from scipy.stats import gaussian_kde
+    kde = gaussian_kde(finals, bw_method=0.15)
+    x_range = np.linspace(finals.min(), finals.max(), 400)
+    y_kde   = kde(x_range)
+
+    fig_dist = go.Figure()
+    fig_dist.add_trace(go.Scatter(
+        x=x_range, y=y_kde, mode="lines", fill="tozeroy",
+        fillcolor="rgba(59,130,246,0.15)",
+        line=dict(color="#3b82f6", width=2),
+        name="Distribution",
+        hovertemplate="$%{x:.0f}<extra></extra>"))
+    for v,n,c in [(p5,"5th","#ef4444"),(p25,"25th","#f59e0b"),
+                  (p50,"Median","#22c55e"),(p75,"75th","#f59e0b"),
+                  (p95,"95th","#ef4444"),(S0,"Start","#fff")]:
+        fig_dist.add_shape(type="line", x0=v, x1=v, y0=0, y1=1, yref="paper",
+                           line=dict(color=c, width=1.5, dash="dot"))
+        fig_dist.add_annotation(x=v, y=1, yref="paper", text=f"{n}<br>${v:.0f}",
+                                showarrow=False, font=dict(color=c, size=9),
+                                yanchor="bottom", xanchor="center")
+    pl(fig_dist, height=280, title="Distribution of Final Prices", legend=False,
+       rsel=False, rslide=False, xtype=None)
+    st.plotly_chart(fig_dist, use_container_width=True)
 
 # ══════════════════════════════════════════════════════════════
 #  PROPHET
@@ -824,8 +868,12 @@ with t4:
             fig_p.add_trace(go.Scatter(x=fc_fut["ds"],y=fc_fut["yhat"],mode="lines",
                 name=f"{meth} Forecast",line=dict(color="#22c55e",width=2,dash="dot"),
                 hovertemplate="%{x|%b %d, %Y}: $%{y:.2f}<extra></extra>"))
-        fig_p.add_vline(x=str(cs["ds"].iloc[-1]),line_color="rgba(255,255,255,0.2)",line_dash="dash",
-                        annotation_text="Today",annotation_font_color="rgba(255,255,255,0.3)")
+        today_x = str(cs["ds"].iloc[-1])
+        fig_p.add_shape(type="line", x0=today_x, x1=today_x, y0=0, y1=1,
+                        yref="paper", line=dict(color="rgba(255,255,255,0.2)", width=1, dash="dash"))
+        fig_p.add_annotation(x=today_x, y=1, yref="paper", text="Today",
+                             showarrow=False, font=dict(color="rgba(255,255,255,0.3)", size=10),
+                             yanchor="bottom", xanchor="left")
         pl(fig_p, height=400, title=f"{ticker_input} — {meth} Price Forecast ({prediction_days}d)")
         st.plotly_chart(fig_p,use_container_width=True)
 
@@ -954,15 +1002,21 @@ with t5:
         rl="Overbought" if rv>70 else("Oversold" if rv<30 else "Neutral")
         st.markdown(f"**Current RSI:** <span style='color:{rc};font-weight:600;font-size:16px'>{rv:.1f} — {rl}</span>",unsafe_allow_html=True)
         fig_r=go.Figure()
-        fig_r.add_hrect(y0=70,y1=100,fillcolor="rgba(239,68,68,0.06)",line_width=0)
-        fig_r.add_hrect(y0=0,y1=30,fillcolor="rgba(34,197,94,0.06)",line_width=0)
+        # Shaded zones using shapes instead of hrect (Plotly 6 compat)
+        fig_r.add_shape(type="rect", x0=0, x1=1, xref="paper",
+                        y0=70, y1=100, fillcolor="rgba(239,68,68,0.06)", line_width=0)
+        fig_r.add_shape(type="rect", x0=0, x1=1, xref="paper",
+                        y0=0, y1=30, fillcolor="rgba(34,197,94,0.06)", line_width=0)
         fig_r.add_trace(go.Scatter(x=td,y=rsi_,mode="lines",name="RSI (14)",
             line=dict(color="#3b82f6",width=1.5),
             hovertemplate="%{x|%b %d, %Y}: %{y:.1f}<extra></extra>"))
-        fig_r.add_hline(y=70,line_color="#ef4444",line_width=1,line_dash="dash",
-                        annotation_text="Overbought 70",annotation_font_color="#ef4444",annotation_font_size=10)
-        fig_r.add_hline(y=30,line_color="#22c55e",line_width=1,line_dash="dash",
-                        annotation_text="Oversold 30",annotation_font_color="#22c55e",annotation_font_size=10)
+        # Horizontal lines using shapes
+        for y_val, clr, lbl in [(70,"#ef4444","Overbought 70"),(30,"#22c55e","Oversold 30")]:
+            fig_r.add_shape(type="line", x0=0, x1=1, xref="paper",
+                            y0=y_val, y1=y_val, line=dict(color=clr, width=1, dash="dash"))
+            fig_r.add_annotation(x=1, xref="paper", y=y_val, text=lbl,
+                                 showarrow=False, font=dict(color=clr, size=9),
+                                 xanchor="right", yanchor="bottom")
         pl(fig_r, height=320, title="RSI — Relative Strength Index (14-day)", yrange=[0,100])
         st.plotly_chart(fig_r,use_container_width=True)
         with st.expander("❓ How to read RSI"):
