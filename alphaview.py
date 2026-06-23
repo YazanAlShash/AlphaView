@@ -285,6 +285,67 @@ def sv(df,row,col=0):
         v=df.loc[row].iloc[col]; return float(v) if pd.notna(v) else None
     except: return None
 
+def _norm(s):
+    # lowercase + strip everything except letters/numbers, so naming variants collapse
+    return "".join(ch for ch in str(s).lower() if ch.isalnum())
+
+def svx(df, aliases, col=0):
+    """Resolve a value from a statement DataFrame by trying many possible row names.
+
+    Works across every yfinance template/version: tries each alias as an exact
+    match, then as a normalized (case/space/punct-insensitive) match, then as a
+    normalized substring match. Returns the first non-NaN value found, or None.
+    """
+    if df is None or getattr(df, "empty", True): return None
+    if isinstance(aliases, str): aliases = [aliases]
+    idx = list(df.index)
+    norm_map = {}
+    for r in idx:
+        norm_map.setdefault(_norm(r), r)
+    # 1) exact, 2) normalized-equal
+    for a in aliases:
+        if a in df.index:
+            v = sv(df, a, col)
+            if v is not None: return v
+        na = _norm(a)
+        if na in norm_map:
+            v = sv(df, norm_map[na], col)
+            if v is not None: return v
+    # 3) normalized substring (alias contained in a row name or vice-versa)
+    for a in aliases:
+        na = _norm(a)
+        if not na: continue
+        for nr, original in norm_map.items():
+            if na in nr or nr in na:
+                v = sv(df, original, col)
+                if v is not None: return v
+    return None
+
+# Canonical alias lists — covers the naming variants yfinance returns for
+# different companies, sectors, and library versions.
+ALIASES = {
+    "revenue":      ["Total Revenue","Revenue","Operating Revenue","Total Revenues","Net Revenue"],
+    "cogs":         ["Cost Of Revenue","Cost Of Goods Sold","Cost Of Goods And Services Sold","Reconciled Cost Of Revenue"],
+    "gross":        ["Gross Profit","Gross Income"],
+    "operating":    ["Operating Income","Total Operating Income As Reported","Operating Income Loss","EBIT","Operating Profit"],
+    "pretax":       ["Pretax Income","Income Before Tax","Pre Tax Income","Earnings Before Tax"],
+    "interest_exp": ["Interest Expense","Interest Expense Non Operating","Net Interest Expense","Interest Paid"],
+    "net":          ["Net Income","Net Income Common Stockholders","Net Income From Continuing Operations","Net Income Including Noncontrolling Interests"],
+    "cur_assets":   ["Current Assets","Total Current Assets","Current Assets Total"],
+    "cur_liab":     ["Current Liabilities","Total Current Liabilities","Current Liabilities Total"],
+    "inventory":    ["Inventory","Inventories","Total Inventory"],
+    "cash":         ["Cash And Cash Equivalents","Cash Cash Equivalents And Short Term Investments",
+                     "Cash And Short Term Investments","Cash Equivalents","Cash Financial"],
+    "receivables":  ["Receivables","Accounts Receivable","Net Receivables","Gross Accounts Receivable"],
+    "total_assets": ["Total Assets"],
+    "equity":       ["Stockholders Equity","Common Stock Equity","Total Stockholder Equity",
+                     "Total Equity Gross Minority Interest","Total Equity"],
+    "debt":         ["Total Debt","Long Term Debt And Capital Lease Obligation","Long Term Debt","Net Debt","Total Debt And Capital Lease Obligation"],
+    "ocf":          ["Operating Cash Flow","Cash Flow From Continuing Operating Activities","Total Cash From Operating Activities","Cash From Operations"],
+    "capex":        ["Capital Expenditure","Capital Expenditures","Purchase Of PPE","Net PPE Purchase And Sale"],
+    "fcf":          ["Free Cash Flow"],
+}
+
 @st.cache_data(ttl=3600)
 def fetch_all(ticker, start, end):
     import time
@@ -308,29 +369,85 @@ def fetch_all(ticker, start, end):
     return None
 
 def calc_ratios(info,income,balance,cashflow):
-    r={}
-    rev=sv(income,"Total Revenue"); gross=sv(income,"Gross Profit")
-    op=sv(income,"Operating Income"); net=sv(income,"Net Income")
-    ca=sv(balance,"Current Assets"); cl=sv(balance,"Current Liabilities")
-    inv=sv(balance,"Inventory") or 0
-    cash=sv(balance,"Cash And Cash Equivalents") or sv(balance,"Cash Cash Equivalents And Short Term Investments") or 0
-    ta=sv(balance,"Total Assets")
-    eq=sv(balance,"Stockholders Equity") or sv(balance,"Common Stock Equity")
-    dbt=sv(balance,"Total Debt") or sv(balance,"Long Term Debt") or 0
-    ocf=sv(cashflow,"Operating Cash Flow") or sv(cashflow,"Cash Flow From Continuing Operating Activities")
-    capex=sv(cashflow,"Capital Expenditure") or 0
+    r={}; notes={}   # notes[key] explains why a value is missing/derived
+    A=ALIASES
+    # ---- pull raw line items, trying every naming variant ----
+    rev   = svx(income, A["revenue"])
+    gross = svx(income, A["gross"])
+    cogs  = svx(income, A["cogs"])
+    op    = svx(income, A["operating"])
+    pretax= svx(income, A["pretax"])
+    intexp= svx(income, A["interest_exp"])
+    net   = svx(income, A["net"])
+    ca    = svx(balance, A["cur_assets"])
+    cl    = svx(balance, A["cur_liab"])
+    inv   = svx(balance, A["inventory"]) or 0
+    cash  = svx(balance, A["cash"])
+    recv  = svx(balance, A["receivables"]) or 0
+    ta    = svx(balance, A["total_assets"])
+    eq    = svx(balance, A["equity"])
+    dbt   = svx(balance, A["debt"]) or 0
+    ocf   = svx(cashflow, A["ocf"])
+    capex = svx(cashflow, A["capex"]) or 0
     if capex>0: capex=-capex
-    def p(a,b): return a/b*100 if a and b else None
-    def d(a,b): return a/b if a and b else None
-    r["Gross Profit Margin"]=p(gross,rev); r["Operating Profit Margin"]=p(op,rev)
-    r["Net Profit Margin"]=p(net,rev); r["Return on Assets (ROA)"]=p(net,ta)
-    r["Return on Equity (ROE)"]=p(net,eq); r["EPS"]=sg(info,"trailingEps")
-    r["Current Ratio"]=d(ca,cl); r["Quick Ratio"]=d(ca-inv,cl) if ca and cl else None
-    r["Cash Ratio"]=d(cash,cl); r["P/E Ratio"]=sg(info,"trailingPE")
-    r["Dividend Payout Ratio"]=sg(info,"payoutRatio"); r["Debt-to-Equity"]=d(dbt,eq)
-    roe=r.get("Return on Equity (ROE)"); pr=r.get("Dividend Payout Ratio")
-    r["Sustainable Growth Rate"]=roe/100*(1-pr)*100 if roe and pr is not None else None
-    r["Free Cash Flow"]=ocf+capex if ocf else None
+
+    # ---- derive line items that weren't reported directly ----
+    # Gross profit = revenue − COGS when not given outright
+    if gross is None and rev is not None and cogs is not None:
+        gross=rev-cogs; notes["Gross Profit Margin"]="derived (Revenue − COGS)"
+    # Operating income ≈ pretax + interest expense when not given (EBIT proxy)
+    if op is None and pretax is not None and intexp is not None:
+        op=pretax+abs(intexp); notes["Operating Profit Margin"]="derived (Pretax + Interest, EBIT proxy)"
+
+    def p(a,b): return a/b*100 if (a is not None and b) else None
+    def d(a,b): return a/b if (a is not None and b) else None
+
+    # ---- profitability ----
+    r["Gross Profit Margin"]=p(gross,rev)
+    r["Operating Profit Margin"]=p(op,rev)
+    r["Net Profit Margin"]=p(net,rev)
+    r["Return on Assets (ROA)"]=p(net,ta)
+    r["Return on Equity (ROE)"]=p(net,eq)
+    r["EPS"]=sg(info,"trailingEps")
+
+    # ---- liquidity ----
+    r["Current Ratio"]=d(ca,cl)
+    r["Quick Ratio"]=d((ca-inv) if ca is not None else None, cl)
+    if cash is None:
+        # fall back to most-liquid assets if no clean cash line
+        cash = svx(balance, ["Cash And Cash Equivalents"]) or 0
+    r["Cash Ratio"]=d(cash, cl)
+
+    # ---- other ----
+    r["P/E Ratio"]=sg(info,"trailingPE")
+    pr=sg(info,"payoutRatio")
+    r["Dividend Payout Ratio"]=pr                      # stored as a FRACTION (e.g. 0.30)
+    r["Debt-to-Equity"]=d(dbt,eq)
+    roe=r.get("Return on Equity (ROE)")                # ROE is stored as a PERCENT (e.g. 9.33)
+    # Sustainable Growth Rate = ROE × retention ratio, stored as a FRACTION
+    if roe is not None and pr is not None:
+        r["Sustainable Growth Rate"]=(roe/100.0)*(1.0-pr)
+    elif roe is not None:
+        r["Sustainable Growth Rate"]=(roe/100.0)      # assume full retention if payout unknown
+        notes["Sustainable Growth Rate"]="payout unknown — assumed 0%"
+    else:
+        r["Sustainable Growth Rate"]=None
+
+    # ---- free cash flow ----
+    fcf_direct = svx(cashflow, A["fcf"])
+    r["Free Cash Flow"]=fcf_direct if fcf_direct is not None else (ocf+capex if ocf is not None else None)
+
+    # ---- explain genuine absences (not a naming issue — the company doesn't report it) ----
+    sector=(sg(info,"sector") or "")
+    fin_like = any(w in sector for w in ["Financial","Insurance","Bank"]) or (ca is None and cl is None)
+    for k,present in [("Gross Profit Margin",r["Gross Profit Margin"]),
+                      ("Operating Profit Margin",r["Operating Profit Margin"]),
+                      ("Current Ratio",r["Current Ratio"]),
+                      ("Quick Ratio",r["Quick Ratio"]),
+                      ("Cash Ratio",r["Cash Ratio"])]:
+        if present is None and k not in notes:
+            notes[k]="not reported for financials/insurers" if fin_like else "not reported by company"
+    r["_notes"]=notes
     return r
 
 def calc_beta(hist):
@@ -345,15 +462,26 @@ def calc_beta(hist):
         return b,rv**2,df2
     except: return None,None,None
 
-def calc_wacc(info,balance,rf,rm,beta):
+def calc_wacc(info,balance,rf,rm,beta,income=None):
     try:
         mc=sg(info,"marketCap"); tax=sg(info,"effectiveTaxRate") or 0.21
-        dbt=sv(balance,"Total Debt") or sv(balance,"Long Term Debt") or 0
-        if not mc or not beta: return None,None,None
-        re=rf+beta*(rm-rf); rd=abs(sg(info,"interestExpense") or 0)/dbt if dbt>0 else 0.05
-        V=mc+dbt; wacc=(mc/V)*re+(dbt/V)*rd*(1-tax)
-        return wacc,re,rd
-    except: return None,None,None
+        dbt=svx(balance, ALIASES["debt"]) or 0
+        if not mc or not beta: return None,None,None,False
+        re=rf+beta*(rm-rf)
+        rd_estimated=False
+        # Prefer actual interest expense / total debt; try info, then income statement
+        intexp=sg(info,"interestExpense")
+        if intexp is None and income is not None:
+            intexp=svx(income, ALIASES["interest_exp"])
+        if dbt>0 and intexp is not None and abs(intexp)>0:
+            rd=abs(intexp)/dbt
+        else:
+            # No usable interest data → estimate: risk-free + a modest credit spread
+            rd=rf+0.015; rd_estimated=True
+        V=mc+dbt
+        wacc=(mc/V)*re+(dbt/V)*rd*(1-tax)
+        return wacc,re,rd,rd_estimated
+    except: return None,None,None,False
 
 def calc_intrinsic(cashflow,info,wacc,g=0.03):
     try:
@@ -362,6 +490,30 @@ def calc_intrinsic(cashflow,info,wacc,g=0.03):
         if not fcf or not wacc or wacc<=g or not sh: return None
         return (fcf*(1+g)/(wacc-g))/sh
     except: return None
+
+def intrinsic_confidence(cashflow,info,wacc,intrinsic,ratios,g=0.03):
+    """Rate how well the Gordon Growth single-stage model fits this company.
+    Gordon Growth assumes one smooth, perpetually-growing cash flow — that fits
+    stable mature firms far better than financials/insurers or companies with
+    lumpy or negative cash flow. Returns dict(level, score, reasons)."""
+    if intrinsic is None:
+        return dict(level="None", score=0, reasons=["Model could not be computed."])
+    reasons=[]; penalty=0
+    sector=(sg(info,"sector") or "")
+    if any(w in sector for w in ["Financial","Insurance","Bank"]):
+        penalty+=2; reasons.append("Financial/insurance firm — free cash flow is poorly defined here.")
+    if wacc is not None and (wacc-g)<0.03:
+        penalty+=2; reasons.append(f"Discount rate is close to terminal growth ({(wacc-g)*100:.1f}% gap) — output is very sensitive.")
+    fcf=ratios.get("Free Cash Flow")
+    if fcf is not None and fcf<=0:
+        penalty+=2; reasons.append("Free cash flow is negative — a growing-perpetuity model doesn't apply.")
+    pr=ratios.get("Dividend Payout Ratio")
+    if pr is not None and pr==0:
+        penalty+=1; reasons.append("Company pays no dividend — value rests entirely on reinvested-cash assumptions.")
+    if penalty>=3:   level="Low"
+    elif penalty>=1: level="Medium"
+    else:            level="High"; reasons.append("Stable inputs — single-stage assumptions are reasonable.")
+    return dict(level=level, score=max(0,4-penalty), reasons=reasons)
 
 def run_mc(close_series,days,n_iter,chunk=5000):
     s=close_series.squeeze().dropna(); rets=np.log(1+s.pct_change()).dropna()
@@ -396,11 +548,18 @@ def build_scenario(S0,p5,p25,p50,p75,p95,ratios,capm_ret,cur,intrinsic,risk,hor,
     pos=sum(1 for _,s,_ in sigs if s=="positive"); neg=sum(1 for _,s,_ in sigs if s=="negative")
     rm_={"Low":0.7,"Medium":1.0,"High":1.3}[risk]
     hm_={"Short-term (< 1 yr)":0.8,"Medium-term (1–3 yrs)":1.0,"Long-term (3+ yrs)":1.2}[hor]
-    bp=p75*rm_*hm_; base=p50; bear=p25/rm_
+    # Spread multiplier widens/narrows the band around the base case.
+    # Anchoring on the base guarantees bull >= base >= bear for EVERY profile,
+    # so the upside is always the bullish case and the downside always bearish.
+    spread=rm_*hm_
+    base=p50
+    bull=base+(p75-base)*spread
+    bear=base-(base-p25)*spread
+    bp=bull
     return dict(signals=sigs,pos=pos,neg=neg,
-                bull_price=bp,base_price=base,bear_price=bear,
-                bull_ret=(bp-S0)/S0,base_ret=(base-S0)/S0,bear_ret=(bear-S0)/S0,
-                bull_gain=amt*(bp-S0)/S0,base_gain=amt*(base-S0)/S0,bear_gain=amt*(bear-S0)/S0,
+                bull_price=bull,base_price=base,bear_price=bear,
+                bull_ret=(bull-S0)/S0,base_ret=(base-S0)/S0,bear_ret=(bear-S0)/S0,
+                bull_gain=amt*(bull-S0)/S0,base_gain=amt*(base-S0)/S0,bear_gain=amt*(bear-S0)/S0,
                 risk_level="🔴 High" if abs((p5-S0)/S0)>0.4 else("🟡 Medium" if abs((p5-S0)/S0)>0.2 else "🟢 Low"),
                 downside_pct=abs((p5-S0)/S0*100))
 
@@ -496,8 +655,9 @@ company=sg(info,"longName") or ticker_input
 with st.spinner("Running calculations..."):
     ratios=calc_ratios(info,income,balance,cashflow)
     beta,r2,df_reg=calc_beta(hist)
-    wacc,re,rd=calc_wacc(info,balance,rf,rm,beta)
+    wacc,re,rd,rd_estimated=calc_wacc(info,balance,rf,rm,beta,income)
     intrinsic=calc_intrinsic(cashflow,info,wacc)
+    intrinsic_conf=intrinsic_confidence(cashflow,info,wacc,intrinsic,ratios)
 
 with st.spinner(f"Running {iterations:,} Monte Carlo simulations..."):
     S0,finals,spaths=run_mc(hist["Close"],prediction_days,iterations)
@@ -658,35 +818,42 @@ with t1:
         "Sustainable Growth Rate": "Max growth rate achievable without new equity financing. ROE × retention rate.",
     }
 
+    notes=ratios.get("_notes",{})
+    def val_or_note(k, formatted):
+        # show the number if present, else a short reason instead of bare N/A
+        if formatted is not None: return formatted
+        n=notes.get(k)
+        return f"— {n}" if n else "N/A"
+
     st.markdown("#### 💰 Profitability")
     pc=st.columns(3)
     for i,k in enumerate(["Gross Profit Margin","Operating Profit Margin","Net Profit Margin",
                            "Return on Assets (ROA)","Return on Equity (ROE)","EPS"]):
         v=ratios.get(k); sfx="%" if k!="EPS" else ""
-        pc[i%3].metric(f"{hlth(k,v)} {k}",
-                       f"{v:.2f}{sfx}" if v is not None else "N/A",
-                       help=RATIO_HELP.get(k,""))
+        fmt=f"{v:.2f}{sfx}" if v is not None else None
+        lbl=f"{hlth(k,v)} {k}" + (" ✳" if k in notes and v is not None else "")
+        pc[i%3].metric(lbl, val_or_note(k,fmt), help=RATIO_HELP.get(k,""))
 
     st.markdown("#### 💧 Liquidity")
     lc=st.columns(3)
     for i,k in enumerate(["Current Ratio","Quick Ratio","Cash Ratio"]):
         v=ratios.get(k)
-        lc[i].metric(f"{hlth(k,v)} {k}",
-                     f"{v:.2f}" if v is not None else "N/A",
-                     help=RATIO_HELP.get(k,""))
+        fmt=f"{v:.2f}" if v is not None else None
+        lc[i].metric(f"{hlth(k,v)} {k}", val_or_note(k,fmt), help=RATIO_HELP.get(k,""))
 
     st.markdown("#### 📌 Other")
     ac=st.columns(4)
     for i,k in enumerate(["P/E Ratio","Dividend Payout Ratio","Debt-to-Equity","Sustainable Growth Rate"]):
         v=ratios.get(k)
-        if v is not None and k in ["Dividend Payout Ratio","Sustainable Growth Rate"]:
-            ac[i].metric(f"{hlth(k,v)} {k}",
-                         f"{v*100:.1f}%" if v<10 else f"{v:.1f}%",
-                         help=RATIO_HELP.get(k,""))
+        if k in ["Dividend Payout Ratio","Sustainable Growth Rate"]:
+            # both are stored as FRACTIONS now — multiply by 100 exactly once
+            fmt=f"{v*100:.1f}%" if v is not None else None
         else:
-            ac[i].metric(f"{hlth(k,v)} {k}",
-                         f"{v:.2f}" if v is not None else "N/A",
-                         help=RATIO_HELP.get(k,""))
+            fmt=f"{v:.2f}" if v is not None else None
+        lbl=f"{hlth(k,v)} {k}" + (" ✳" if k in notes and v is not None else "")
+        ac[i].metric(lbl, val_or_note(k,fmt), help=RATIO_HELP.get(k,""))
+    if any(k in notes for k in notes):
+        st.caption("✳ = derived or assumption-based · “— …” = not reported by this company")
 
     fcf=ratios.get("Free Cash Flow")
     if fcf:
@@ -733,7 +900,13 @@ with t2:
             w1,w2,w3=st.columns(3)
             w1.metric("WACC",f"{wacc*100:.2f}%")
             w2.metric("Cost of Equity",f"{re*100:.2f}%" if re else "N/A")
-            w3.metric("Cost of Debt",f"{rd*100:.2f}%" if rd else "N/A")
+            # rd is None only if something failed; 0 is a valid (if unusual) value.
+            if rd is not None:
+                cd_label="Cost of Debt"+(" (est.)" if rd_estimated else "")
+                w3.metric(cd_label, f"{rd*100:.2f}%",
+                          help="Estimated as risk-free + 1.5% credit spread — the company's interest expense wasn't reported." if rd_estimated else "Interest expense ÷ total debt.")
+            else:
+                w3.metric("Cost of Debt","N/A")
         else: st.info("WACC could not be calculated.")
         st.divider()
         st.markdown("### DCF Intrinsic Value")
@@ -746,7 +919,20 @@ with t2:
             if gap>15: st.success(f"✅ Potentially undervalued by {gap:.1f}%")
             elif gap<-15: st.warning(f"⚠️ Potentially overvalued by {abs(gap):.1f}%")
             else: st.info(f"ℹ️ Fairly valued (gap {gap:+.1f}%)")
-            st.caption("Gordon Growth Model · 3% terminal growth rate")
+            # ---- model confidence badge ----
+            conf=intrinsic_conf
+            _cc={"High":"#22c55e","Medium":"#f59e0b","Low":"#ef4444","None":"#6b7280"}[conf["level"]]
+            _dots="●"*conf["score"]+"○"*(4-conf["score"])
+            st.markdown(
+                f"<div style='margin-top:6px;padding:8px 12px;border-radius:8px;"
+                f"border:1px solid {_cc}55;background:{_cc}14;font-size:13px;color:{_cc}'>"
+                f"<strong>Model confidence: {conf['level']}</strong> &nbsp;<span style='letter-spacing:2px'>{_dots}</span></div>",
+                unsafe_allow_html=True)
+            if conf["reasons"]:
+                with st.expander("Why this confidence level?"):
+                    for rsn in conf["reasons"]:
+                        st.markdown(f"- {rsn}")
+            st.caption("Gordon Growth Model · 3% terminal growth rate · single-stage perpetuity")
         else: st.info("Intrinsic value could not be calculated.")
 
 # ══════════════════════════════════════════════════════════════
